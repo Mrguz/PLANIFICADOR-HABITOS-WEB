@@ -8,6 +8,16 @@ const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 
 /**
+ * Función para extraer la IP del request (compatible con Express 5)
+ */
+const getClientIp = (req) => {
+  return req.ip || 
+         req.socket?.remoteAddress || 
+         req.connection?.remoteAddress ||
+         'unknown';
+};
+
+/**
  * Función para extraer la clave del rate limiter
  * - Para usuarios autenticados: usa el userId del token JWT
  * - Para usuarios no autenticados: usa la IP
@@ -23,13 +33,14 @@ const getUserKeyForRateLimit = (req) => {
   } catch (error) {
     // Si el token es inválido o no existe, usar IP como fallback
   }
-  return `ip_${req.ip}`; // Fallback a IP para rutas públicas
+  const clientIp = getClientIp(req);
+  return `ip_${clientIp}`; // Fallback a IP para rutas públicas
 };
 
 // Rate limiter general para todas las rutas (por usuario autenticado)
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 1000, // límite de 1000 requests por usuario por ventana de tiempo
+  windowMs: 10 * 60 * 1000, // 10 minutos
+  max: 10000, // límite de 10000 requests por usuario por ventana de tiempo(Cambiar despues de la presentacion a 1000)
   message: {
     success: false,
     error: 'Has excedido el límite de solicitudes. Intenta de nuevo más tarde.',
@@ -39,14 +50,21 @@ const apiLimiter = rateLimit({
   keyGenerator: getUserKeyForRateLimit, // Usa userId o IP
   skip: (req) => {
     // En desarrollo, saltar rate limiting para localhost
-    return process.env.NODE_ENV === 'development' && req.ip === '::1';
+    const clientIp = getClientIp(req);
+    return process.env.NODE_ENV === 'development' && (clientIp === '::1' || clientIp === '127.0.0.1');
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: 'Has excedido el límite de solicitudes. Intenta de nuevo más tarde.',
+    });
   },
 });
 
 // Rate limiter más estricto para autenticación
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 5, // Solo 5 intentos por IP
+  max: 1000, // 1000 para la presentacion, se debe cambiar despues 
   message: {
     success: false,
     error: 'Demasiados intentos de inicio de sesión. Por favor intenta de nuevo en 15 minutos.',
@@ -56,20 +74,33 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   skip: (req) => {
     // En desarrollo, saltar rate limiting para localhost
-    return process.env.NODE_ENV === 'development' && req.ip === '::1';
+    const clientIp = getClientIp(req);
+    return process.env.NODE_ENV === 'development' && (clientIp === '::1' || clientIp === '127.0.0.1');
+  },
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: 'Demasiados intentos de inicio de sesión. Por favor intenta de nuevo en 15 minutos.',
+    });
   },
 });
 
 // Rate limiter para reset de contraseña
 const passwordResetLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hora
-  max: 3, // Solo 3 intentos por hora
+  max: 1000, // 1000 para la presentacion, se debe cambiar despues 
   message: {
     success: false,
     error: 'Demasiados intentos de restablecimiento de contraseña. Intenta de nuevo más tarde.',
   },
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      error: 'Demasiados intentos de restablecimiento de contraseña. Intenta de nuevo más tarde.',
+    });
+  },
 });
 
 module.exports = {

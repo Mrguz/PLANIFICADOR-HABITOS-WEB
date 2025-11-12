@@ -2,19 +2,9 @@
 
 const db = require('../database/db');
 const ExcelJS = require('exceljs');
-const pdf = require('html-pdf');
+const puppeteer = require('puppeteer');
 const fs = require('fs'); // Módulo para leer archivos del sistema
 const path = require('path'); // Módulo para manejar rutas de archivos
-
-// Promisifica pdf.create().toStream para usar async/await
-const pdfCreateStream = (html, options) => {
-    return new Promise((resolve, reject) => {
-        pdf.create(html, options).toStream((err, stream) => {
-            if (err) return reject(err);
-            resolve(stream);
-        });
-    });
-};
 
 // --- FUNCIÓN BASE PARA CONSULTAR DATOS (VERSIÓN FINAL) ---
 const fetchDataToExport = async (dataType, userId) => {
@@ -44,7 +34,7 @@ const fetchDataToExport = async (dataType, userId) => {
                 completion_date DESC
         ) AS T1
         ORDER BY current_streak DESC
-        LIMIT 1;
+        LIMIT 1
     `;
 
     try {
@@ -72,16 +62,26 @@ const fetchDataToExport = async (dataType, userId) => {
 
             // Ahora, para cada hábito, calculamos su racha
             for (const habit of habitList) {
-                const [streakResult] = await db.query(STREAK_QUERY, [habit.id]);
-                const currentStreak = streakResult[0]?.current_streak || 0;
+                try {
+                    const [streakResult] = await db.query(STREAK_QUERY, [habit.id]);
+                    const currentStreak = (streakResult && streakResult.length > 0 && streakResult[0]?.current_streak) || 0;
 
-                // Nota: La columna 'longest_streak' no parece existir en tu base de datos.
-                // La omitimos para evitar más errores.
-                habits.push({
-                    'Hábito': habit.title,
-                    'Racha Actual': currentStreak,
-                    'Racha Más Larga': 'N/A' // O un valor por defecto
-                });
+                    // Nota: La columna 'longest_streak' no parece existir en tu base de datos.
+                    // La omitimos para evitar más errores.
+                    habits.push({
+                        'Hábito': habit.title,
+                        'Racha Actual': currentStreak,
+                        'Racha Más Larga': 'N/A' // O un valor por defecto
+                    });
+                } catch (habitError) {
+                    console.error(`[EXPORT ERROR] Error al calcular racha para hábito ${habit.id}:`, habitError);
+                    // Si falla, añade el hábito con racha 0
+                    habits.push({
+                        'Hábito': habit.title,
+                        'Racha Actual': 0,
+                        'Racha Más Larga': 'N/A'
+                    });
+                }
             }
             console.log(`[EXPORT DEBUG] Calculados los datos para ${habits.length} hábitos.`);
         }
@@ -194,8 +194,9 @@ exports.exportToExcel = async (req, res) => {
         res.end();
 
     } catch (error) {
-        console.error('Error durante la exportación a Excel:', error);
-        res.status(500).send('Error interno del servidor al generar el Excel.');
+        console.error('[EXCEL EXPORT ERROR] Error durante la exportación a Excel:', error);
+        console.error('[EXCEL EXPORT ERROR] Stack:', error.stack);
+        res.status(500).send(`Error interno del servidor al generar el Excel: ${error.message}`);
     }
 };
 
@@ -253,15 +254,40 @@ exports.exportToPDF = async (req, res) => {
         `;
         // ✅ FIN DE LA MODIFICACIÓN
 
-        const options = { format: 'A4', border: '1cm' };
-        const pdfStream = await pdfCreateStream(htmlContent, options);
+        // Generar PDF con Puppeteer
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+            ]
+        });
+        
+        const page = await browser.newPage();
+        await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
+        
+        const pdfBuffer = await page.pdf({
+            format: 'A4',
+            margin: {
+                top: '1cm',
+                right: '1cm',
+                bottom: '1cm',
+                left: '1cm'
+            },
+            printBackground: true
+        });
+        
+        await browser.close();
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=Reporte_${dataType}_${new Date().toISOString().split('T')[0]}.pdf`);
-        pdfStream.pipe(res);
+        res.send(pdfBuffer);
 
     } catch (error) {
-        console.error('Error durante la exportación a PDF:', error);
-        res.status(500).send('Error interno del servidor al generar el PDF.');
+        console.error('[PDF EXPORT ERROR] Error durante la exportación a PDF:', error);
+        console.error('[PDF EXPORT ERROR] Stack:', error.stack);
+        res.status(500).send(`Error interno del servidor al generar el PDF: ${error.message}`);
     }
 };

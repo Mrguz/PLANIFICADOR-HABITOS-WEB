@@ -12,6 +12,7 @@ import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import Box from '@mui/material/Box';
 import { PageLayout } from '../../components';
+import API_URL from '../../config/api';
 import {
     chartsCustomizations,
     dataGridCustomizations,
@@ -89,7 +90,7 @@ function HabitsPage(props) {
 
             try {
                 // El backend ahora devuelve 'streak' y 'lastCompleted'
-                const response = await fetch('http://localhost:5000/api/habits', {
+                const response = await fetch(`${API_URL}/api/habits`, {
                     headers: getAuthHeaders(),
                 });
 
@@ -137,7 +138,7 @@ function HabitsPage(props) {
                 : '/api/habits';
             const method = currentHabit.id ? 'PUT' : 'POST';
 
-            const response = await fetch(`http://localhost:5000${url}`, {
+            const response = await fetch(`${API_URL}${url}`, {
                 method: method,
                 headers: getAuthHeaders(true),
                 body: JSON.stringify(currentHabit),
@@ -170,7 +171,7 @@ function HabitsPage(props) {
 
     const handleDeleteHabit = async (habitId) => {
         try {
-            const response = await fetch(`http://localhost:5000/api/habits/${habitId}`, {
+            const response = await fetch(`${API_URL}/api/habits/${habitId}`, {
                 method: 'DELETE',
                 headers: getAuthHeaders(),
             });
@@ -190,7 +191,7 @@ function HabitsPage(props) {
     // --- FUNCIÓN MODIFICADA PARA LA RACHA ---
     const handleCheckIn = async (habitId) => {
         try {
-            const response = await fetch(`http://localhost:5000/api/habits/${habitId}/checkin`, {
+            const response = await fetch(`${API_URL}/api/habits/${habitId}/checkin`, {
                 method: 'POST',
                 headers: getAuthHeaders(),
             });
@@ -227,12 +228,17 @@ function HabitsPage(props) {
     };
 
     const isStreakInDanger = (habit) => {
-        // 1. Si no hay fecha o si se completó hoy, no hay peligro.
-        if (!habit.lastCompleted || isCompletedToday(habit.lastCompleted)) {
+        // 1. Si no hay fecha de última completación, no está en peligro (es nuevo)
+        if (!habit.lastCompleted) {
             return false;
         }
 
-        // 2. Formatear la fecha de AYER a YYYY-MM-DD (de forma segura).
+        // 2. Si se completó hoy, no hay peligro
+        if (isCompletedToday(habit.lastCompleted)) {
+            return false;
+        }
+
+        // 3. Formatear la fecha de AYER a YYYY-MM-DD
         const yesterday = new Date();
         yesterday.setDate(yesterday.getDate() - 1);
 
@@ -241,10 +247,10 @@ function HabitsPage(props) {
         const dd = String(yesterday.getDate()).padStart(2, '0');
         const yesterdayString = `${yyyy}-${mm}-${dd}`;
 
-        // 3. Comparar la fecha de AYER con la última fecha completada.
-        // El habit.lastCompleted viene del backend como 'YYYY-MM-DD' o similar.
-        // Usamos substring(0, 10) para asegurar que solo comparamos la fecha.
-        return yesterdayString === habit.lastCompleted.substring(0, 10);
+        // 4. El hábito está en peligro si la última vez que se completó NO fue ayer
+        // (significa que se rompió la racha)
+        const lastCompletedDate = habit.lastCompleted.substring(0, 10);
+        return lastCompletedDate !== yesterdayString;
     };
 
     if (loading) { }
@@ -288,8 +294,8 @@ function HabitsPage(props) {
                                     borderLeftColor: !habit.lastCompleted
                                         ? COLOR_HABIT_DEFAULT
                                         : inDanger
-                                        ? COLOR_HABIT_IN_DANGER
-                                        : COLOR_HABIT_SAFE,
+                                            ? COLOR_HABIT_IN_DANGER
+                                            : COLOR_HABIT_SAFE,
                                     transition: 'transform 0.2s, box-shadow 0.2s',
                                     '&:hover': {
                                         transform: 'translateY(-2px)',
